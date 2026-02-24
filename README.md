@@ -24,6 +24,7 @@
 - [Picocrypt](https://github.com/Picocrypt/Picocrypt)
 - [Prism Launcher](https://github.com/PrismLauncher/PrismLauncher)
 - [RetroArch](https://github.com/libretro/RetroArch)
+- [RHash](https://github.com/rhash/RHash)
 - [ShareX](https://github.com/ShareX/ShareX)
 - [Sigil](https://github.com/Sigil-Ebook/Sigil)
 - [Sioyek](https://github.com/ahrm/sioyek)
