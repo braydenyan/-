@@ -22,8 +22,8 @@ from pypdf.xmp import XmpInformation
 # =========================
 
 # don't forget to specify these (many e-readers load from this metadata, or from title: "Book - Author")
-TITLE: str = "The Design of Everyday Things"
-AUTHOR: str = "Don Norman"
+TITLE: str = "-"
+AUTHOR: str = "-"
 
 # supported units: "in", "mm"
 TARGET_SIZE_NAME = "A4"
@@ -1707,3 +1707,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
