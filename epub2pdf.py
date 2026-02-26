@@ -22,8 +22,8 @@ from pypdf.xmp import XmpInformation
 # =========================
 
 # don't forget to specify these (many e-readers load from this metadata, or from title: "Book - Author")
-TITLE: str = ""
-AUTHOR: str = ""
+TITLE: str = "The Design of Everyday Things"
+AUTHOR: str = "Don Norman"
 
 # supported units: "in", "mm"
 TARGET_SIZE_NAME = "A4"
@@ -83,6 +83,7 @@ COMPRESS_PAGE_CONTENT_STREAMS = True
 # pipeline stage toggles (for debugging)
 ENABLE_NORMALIZATION = True
 ENABLE_SMART_CROP = True
+ROTATE_LANDSCAPE_PAGES_TO_PORTRAIT = True
 
 # =========================
 # END CONFIG
@@ -257,10 +258,17 @@ def config_units_per_inch() -> float:
 def pdf_units_per_config_unit(user_unit: float) -> float:
     return pdf_units_per_inch(user_unit) / config_units_per_inch()
 
+def page_box(page):
+    try:
+        return page.cropbox
+    except Exception:
+        return page.mediabox
+
 def page_size_in_config_units(page) -> Tuple[float, float]:
     uu = float(getattr(page, "user_unit", 1.0) or 1.0)
-    w_pdf_units = float(page.mediabox.width)
-    h_pdf_units = float(page.mediabox.height)
+    box = page_box(page)
+    w_pdf_units = float(box.width)
+    h_pdf_units = float(box.height)
     factor = (uu / 72.0) * config_units_per_inch()
     return w_pdf_units * factor, h_pdf_units * factor
 
@@ -319,10 +327,11 @@ def crop_page_by_edge_fractions(
     if (top_frac + bottom_frac) >= (1.0 - EPS):
         raise ValueError("Vertical crop fractions would consume page height.")
 
-    llx = float(page.mediabox.left)
-    lly = float(page.mediabox.bottom)
-    w = float(page.mediabox.width)
-    h = float(page.mediabox.height)
+    box = page_box(page)
+    llx = float(box.left)
+    lly = float(box.bottom)
+    w = float(box.width)
+    h = float(box.height)
 
     new_llx = llx + (w * left_frac)
     new_lly = lly + (h * bottom_frac)
@@ -335,13 +344,14 @@ def crop_page_by_edge_fractions(
     set_all_page_boxes(page, new_llx, new_lly, new_urx, new_ury)
 
 def expand_canvas_centered(page, new_w_pdf_units: float, new_h_pdf_units: float) -> None:
-    old_w = float(page.mediabox.width)
-    old_h = float(page.mediabox.height)
+    box = page_box(page)
+    old_w = float(box.width)
+    old_h = float(box.height)
     if new_w_pdf_units + EPS < old_w or new_h_pdf_units + EPS < old_h:
         raise ValueError("expand_canvas_centered() only supports expanding.")
 
-    llx = float(page.mediabox.left)
-    lly = float(page.mediabox.bottom)
+    llx = float(box.left)
+    lly = float(box.bottom)
     urx = llx + float(new_w_pdf_units)
     ury = lly + float(new_h_pdf_units)
 
@@ -367,8 +377,9 @@ def scale_to_target(page) -> None:
     uu = float(getattr(page, "user_unit", 1.0) or 1.0)
     pdf_per_cfg = pdf_units_per_config_unit(uu)
 
-    w_pdf_units = float(page.mediabox.width)
-    h_pdf_units = float(page.mediabox.height)
+    box = page_box(page)
+    w_pdf_units = float(box.width)
+    h_pdf_units = float(box.height)
 
     target_portrait_w = min(TARGET_W, TARGET_H) * pdf_per_cfg
     target_portrait_h = max(TARGET_W, TARGET_H) * pdf_per_cfg
@@ -383,7 +394,6 @@ def scale_to_target(page) -> None:
         target_h = target_landscape_h
 
     page.scale_to(target_w, target_h)
-
 
 def maybe_compress_page_content_streams(page) -> None:
     if not COMPRESS_PAGE_CONTENT_STREAMS:
@@ -438,10 +448,19 @@ def _rect_rotation_transfer_transform(
     return trsf, float(max_x - min_x), float(max_y - min_y)
 
 def _flatten_page_rotation_transform(page) -> Tuple[Transformation, float, float]:
-    w = float(page.mediabox.width)
-    h = float(page.mediabox.height)
+    box = page_box(page)
+    llx = float(box.left)
+    lly = float(box.bottom)
+    w = float(box.width)
+    h = float(box.height)
     rot = _page_rotation_degrees(page)
-    return _rect_rotation_transfer_transform(0.0, 0.0, w, h, rot)
+
+    if rot % 360 == 0:
+        if abs(llx) > EPS or abs(lly) > EPS:
+            return Transformation().translate(-llx, -lly), float(w), float(h)
+        return Transformation(), float(w), float(h)
+
+    return _rect_rotation_transfer_transform(llx, lly, w, h, rot)
 
 def _target_dims_pdf_units_for_orientation(
     *,
@@ -478,6 +497,7 @@ def _make_transformed_page_from_source(
         width=float(out_w_pdf_units),
         height=float(out_h_pdf_units),
     )
+    set_all_page_boxes(new_page, 0.0, 0.0, float(out_w_pdf_units), float(out_h_pdf_units))
     _copy_user_unit_if_present(src_page, new_page)
     new_page.merge_transformed_page(src_page, transform, over=True, expand=False)
     return new_page
@@ -548,7 +568,7 @@ def normalize_page_to_target(page) -> Tuple[object, str, str, PadEquivalentTrimS
     w_cfg = cur_w_pdf * factor_pdf_to_cfg
     h_cfg = cur_h_pdf * factor_pdf_to_cfg
 
-    if w_cfg > h_cfg:
+    if ROTATE_LANDSCAPE_PAGES_TO_PORTRAIT and (w_cfg > h_cfg):
         rot90_tr, cur_w_pdf, cur_h_pdf = _rect_rotation_transfer_transform(
             0.0, 0.0, cur_w_pdf, cur_h_pdf, 90
         )
@@ -684,10 +704,11 @@ def crop_page_same_ratio_with_focus(page, scale: float, focus_mode: str) -> None
     if scale >= 1.0 - EPS:
         return
 
-    llx = float(page.mediabox.left)
-    lly = float(page.mediabox.bottom)
-    urx = float(page.mediabox.right)
-    ury = float(page.mediabox.top)
+    box = page_box(page)
+    llx = float(box.left)
+    lly = float(box.bottom)
+    urx = float(box.right)
+    ury = float(box.top)
     w = urx - llx
     h = ury - lly
 
@@ -740,10 +761,11 @@ def add_ratio_abiding_post_crop_padding_by_vertical_mm(page, vertical_padding_mm
     pad_x_pdf = pad_x_cfg * pdf_per_cfg
     pad_y_pdf = pad_y_cfg * pdf_per_cfg
 
-    llx = float(page.mediabox.left)
-    lly = float(page.mediabox.bottom)
-    urx = float(page.mediabox.right)
-    ury = float(page.mediabox.top)
+    box = page_box(page)
+    llx = float(box.left)
+    lly = float(box.bottom)
+    urx = float(box.right)
+    ury = float(box.top)
 
     set_all_page_boxes(
         page,
@@ -1377,8 +1399,9 @@ def apply_content_reposition_pass(
         note = ""
 
         if edgef is not None and edge_reposition_enabled():
-            w = float(page.mediabox.width)
-            h = float(page.mediabox.height)
+            box = page_box(page)
+            w = float(box.width)
+            h = float(box.height)
             if w > EPS and h > EPS:
                 left_ws = edgef.left * w
                 right_ws = edgef.right * w
@@ -1526,7 +1549,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Normalize PDF (or auto-convert EPUB) to configured target page size, "
-            "rotate landscape pages to portrait, "
+            "optionally rotate landscape pages to portrait, "
             "pad to target aspect ratio and scale to target, "
             "apply content-aware uniform smart crop (with optional ratio-abiding post-crop padding) and rescale to target, "
             "optionally restore exact pre-normalization-pad page dimensions, "
@@ -1684,4 +1707,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
