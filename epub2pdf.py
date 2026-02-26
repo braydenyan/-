@@ -21,8 +21,9 @@ from pypdf.xmp import XmpInformation
 # CONFIG
 # =========================
 
-# don't forget to specify this (many e-readers load author data from title: "Book - Author")
-AUTHOR: str = "author"
+# don't forget to specify these (many e-readers load from this metadata, or from title: "Book - Author")
+AUTHOR: str = ""
+TITLE: str = ""
 
 # supported units: "in", "mm"
 TARGET_SIZE_NAME = "A4"
@@ -69,7 +70,7 @@ REMOVE_NORMALIZATION_PAD_RESIDUAL_AFTER_SMART_CROP = True
 EDGE_REPOSITION_TOP_BOTTOM_MODE = "none"
 EDGE_REPOSITION_TOP_BOTTOM_GREEDY_SIDE = "top"
 
-EDGE_REPOSITION_LEFT_RIGHT_MODE = "normal"
+EDGE_REPOSITION_LEFT_RIGHT_MODE = "none"
 EDGE_REPOSITION_LEFT_RIGHT_GREEDY_SIDE = "left"
 
 EDGE_REPOSITION_DETECT_DPI = 150 # higher = more accurate but slower
@@ -1599,7 +1600,8 @@ def main() -> int:
                 )
             )
 
-        title = (getattr(reader.metadata, "title", None) if reader.metadata else None) or in_path.stem
+        input_title = (getattr(reader.metadata, "title", None) if reader.metadata else None) or in_path.stem
+        title = TITLE or input_title
         doc_norm_pad_target_sides = choose_document_normalization_pad_target_sides(per_page_norm_pad_sides)
 
         if temp_dir_obj is None:
