@@ -13,7 +13,7 @@ from ytmusicapi import YTMusic # type: ignore
 # =========================
 
 PLAYLIST_URL = "https://music.youtube.com/playlist?list=PUT_YOUR_PLAYLIST_ID_OR_URL_HERE"
-TOP_DOWN = True
+TOP_DOWN = False
 SLEEP_SECONDS = 1.5
 
 # insert "Authorization" and "Cookie" values from browser login session (do NOT share!)
@@ -198,6 +198,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
