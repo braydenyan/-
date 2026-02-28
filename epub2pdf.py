@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,11 @@ RATIO_TOL_REL = 0.005 # 0.5% ratio comparison tolerance
 SIZE_TOL = 0.5        # TARGET_UNIT tolerance
 EPS = 1e-9
 
+# inclusive, continuous, 1-based page range to apply transformations (set to None to process all)
+#   PAGE_RANGE = "10-25"
+#   PAGE_RANGE = "7"
+PAGE_RANGE: Optional[str] = None
+
 # smart crop
 CROP_DETECT_DPI = 150 # higher = more accurate but slower
 CROP_WHITE_THRESHOLD = 245
@@ -55,7 +61,7 @@ SMART_CROP_FOCUS_MODE = "center"
 # applied only to pages that actually receive smart crop before rescaling back to target size
 # this value is the VERTICAL per-side padding (top and bottom) in mm.
 # horizontal per-side padding is computed automatically to preserve aspect ratio
-CENTER_CROP_POST_PADDING_MM = 5.0
+CENTER_CROP_POST_PADDING_MM = 10.0
 
 # optional pass AFTER smart-crop:
 # restore every page back to the pre-normalization-padding dimensions (crop-only, no rescale)
@@ -71,7 +77,7 @@ EDGE_REPOSITION_TOP_BOTTOM_MODE = "none"
 EDGE_REPOSITION_TOP_BOTTOM_GREEDY_SIDE = "top"
 
 EDGE_REPOSITION_LEFT_RIGHT_MODE = "none"
-EDGE_REPOSITION_LEFT_RIGHT_GREEDY_SIDE = "left"
+EDGE_REPOSITION_LEFT_RIGHT_GREEDY_SIDE = "right"
 
 EDGE_REPOSITION_DETECT_DPI = 150 # higher = more accurate but slower
 EDGE_REPOSITION_WHITE_THRESHOLD = 245
@@ -233,6 +239,50 @@ def next_windows_paren_name(in_path: Path, out_suffix: str = ".pdf") -> Path:
         if not candidate.exists():
             return candidate
         n += 1
+
+
+def parse_inclusive_page_range(spec: str) -> Tuple[int, int]:
+    """Parse an inclusive, continuous 1-based page range.
+
+    Accepted forms:
+      - "START-END" (e.g. "10-25")
+      - "N" (single page; equivalent to "N-N")
+    """
+    s = str(spec).strip()
+    if not s:
+        raise ValueError("Empty page range")
+
+    m = re.match(r"^(\d+)(?:\s*-\s*(\d+))?$", s)
+    if not m:
+        raise ValueError(f"Invalid page range: {spec!r} (expected 'START-END' or 'N')")
+
+    start = int(m.group(1))
+    end = int(m.group(2) or m.group(1))
+    if start <= 0 or end <= 0:
+        raise ValueError("Page numbers must be >= 1")
+    if end < start:
+        raise ValueError("Page range end must be >= start")
+
+    return start, end
+
+def build_selected_pages(
+    total_pages: int,
+    page_range: Optional[Tuple[int, int]],
+) -> set[int]:
+    if total_pages < 0:
+        raise ValueError("total_pages must be >= 0")
+
+    if page_range is None:
+        return set(range(1, total_pages + 1))
+
+    start, end = page_range
+    if total_pages == 0:
+        return set()
+    if start < 1 or end < 1 or start > total_pages or end > total_pages:
+        raise ValueError(
+            f"Page range {start}-{end} is out of bounds for document with {total_pages} pages."
+        )
+    return set(range(start, end + 1))
 
 def convert_epub_to_pdf(epub_path: Path, pdf_out: Path) -> None:
     exe = shutil.which("ebook-convert")
@@ -587,9 +637,29 @@ def normalize_page_to_target(page) -> Tuple[object, str, str, PadEquivalentTrimS
         )
         sx = target_w / max(cur_w_pdf, EPS)
         sy = target_h / max(cur_h_pdf, EPS)
-        tr = tr.scale(sx=sx, sy=sy)
+
+        s = min(float(sx), float(sy))
+        tr = tr.scale(sx=s, sy=s)
+
+        scaled_w = float(cur_w_pdf) * s
+        scaled_h = float(cur_h_pdf) * s
+        dx = (float(target_w) - scaled_w) / 2.0
+        dy = (float(target_h) - scaled_h) / 2.0
+
+        if abs(dx) > EPS or abs(dy) > EPS:
+            tr = tr.translate(tx=dx, ty=dy)
+            pad_trim = PadEquivalentTrimSides(
+                left=max(0.0, dx / max(float(target_w), EPS)),
+                right=max(0.0, dx / max(float(target_w), EPS)),
+                top=max(0.0, dy / max(float(target_h), EPS)),
+                bottom=max(0.0, dy / max(float(target_h), EPS)),
+            )
+            base_note = f"aspect ratio ~matched {TARGET_SIZE_NAME}; uniform scale + letterbox padding"
+        else:
+            base_note = f"aspect ratio matched {TARGET_SIZE_NAME}; scaled only"
+
         cur_w_pdf, cur_h_pdf = target_w, target_h
-        base_action, base_note = "scale", f"aspect ratio matched {TARGET_SIZE_NAME}; scaled only"
+        base_action = "scale"
     else:
         w_pdf_units = cur_w_pdf
         h_pdf_units = cur_h_pdf
@@ -802,6 +872,7 @@ def _detect_content_bounds_pixel_boxes_from_pdf(
     *,
     dpi: int,
     white_threshold: int,
+    selected_pages: Optional[set[int]] = None,
 ) -> List[Optional[Tuple[int, int, int, int, int, int]]]:
     results: List[Optional[Tuple[int, int, int, int, int, int]]] = []
 
@@ -810,8 +881,10 @@ def _detect_content_bounds_pixel_boxes_from_pdf(
         try:
             zoom = dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
-
-            for p in doc:
+            for page_num, p in enumerate(doc, start=1):
+                if selected_pages is not None and page_num not in selected_pages:
+                    results.append(None)
+                    continue
                 pix = p.get_pixmap(matrix=mat, colorspace=fitz.csGRAY, alpha=False)
 
                 h_px = int(pix.height)
@@ -856,11 +929,13 @@ def detect_smart_crop_scales_from_pdf(
     dpi: int = CROP_DETECT_DPI,
     white_threshold: int = CROP_WHITE_THRESHOLD,
     focus_mode: str = SMART_CROP_FOCUS_MODE,
+    selected_pages: Optional[set[int]] = None,
 ) -> List[float]:
     bounds = _detect_content_bounds_pixel_boxes_from_pdf(
         pdf_path,
         dpi=dpi,
         white_threshold=white_threshold,
+        selected_pages=selected_pages,
     )
 
     scales: List[float] = []
@@ -918,11 +993,13 @@ def detect_edge_whitespace_fractions_from_pdf(
     *,
     dpi: int = EDGE_REPOSITION_DETECT_DPI,
     white_threshold: int = EDGE_REPOSITION_WHITE_THRESHOLD,
+    selected_pages: Optional[set[int]] = None,
 ) -> List[Optional[EdgeWhitespaceFractions]]:
     bounds = _detect_content_bounds_pixel_boxes_from_pdf(
         pdf_path,
         dpi=dpi,
         white_threshold=white_threshold,
+        selected_pages=selected_pages,
     )
 
     results: List[Optional[EdgeWhitespaceFractions]] = []
@@ -951,12 +1028,14 @@ def apply_smart_crop_pass(
     *,
     author: str,
     title: str,
+    selected_pages: Optional[set[int]] = None,
 ) -> Tuple[List[PageTransform], List[SmartCropOutcome]]:
     crop_scales = detect_smart_crop_scales_from_pdf(
         input_pdf_path,
         dpi=CROP_DETECT_DPI,
         white_threshold=CROP_WHITE_THRESHOLD,
         focus_mode=SMART_CROP_FOCUS_MODE,
+        selected_pages=selected_pages,
     )
     uniform_scale = choose_uniform_smart_crop_scale(crop_scales)
     uniform_crop_amount = max(0.0, 1.0 - uniform_scale)
@@ -975,9 +1054,11 @@ def apply_smart_crop_pass(
         before = page_size_in_config_units(page)
         pre_w_cfg, pre_h_cfg = before
 
+        in_range = (selected_pages is None) or (idx in selected_pages)
+
         page_crop_amount = max(0.0, 1.0 - float(page_possible_scale))
         page_has_crop = page_crop_amount > EPS
-        apply_uniform_crop_here = page_has_crop and (uniform_crop_amount > EPS)
+        apply_uniform_crop_here = in_range and page_has_crop and (uniform_crop_amount > EPS)
 
         transformed_page = page
 
@@ -1050,7 +1131,8 @@ def apply_smart_crop_pass(
 
         after = page_size_in_config_units(transformed_page)
 
-        maybe_compress_page_content_streams(transformed_page)
+        if in_range:
+            maybe_compress_page_content_streams(transformed_page)
 
         writer.add_page(transformed_page)
         events.append(PageTransform(idx, action, before, after, note))
@@ -1212,11 +1294,13 @@ def apply_exact_normalization_pad_restitution_pass(
     title: str,
     document_target_pad_sides: PadEquivalentTrimSides,
     residual_pad_sides_per_page: List[PadEquivalentTrimSides],
+    selected_pages: Optional[set[int]] = None,
 ) -> List[PageTransform]:
     edge_fracs = detect_edge_whitespace_fractions_from_pdf(
         input_pdf_path,
         dpi=EDGE_REPOSITION_DETECT_DPI,
         white_threshold=EDGE_REPOSITION_WHITE_THRESHOLD,
+        selected_pages=selected_pages,
     )
 
     reader = PdfReader(str(input_pdf_path))
@@ -1240,6 +1324,13 @@ def apply_exact_normalization_pad_restitution_pass(
         zip(reader.pages, edge_fracs, residual_pad_sides_per_page), start=1
     ):
         before = page_size_in_config_units(page)
+
+        in_range = (selected_pages is None) or (idx in selected_pages)
+        if not in_range:
+            after = before
+            writer.add_page(page)
+            events.append(PageTransform(idx, "none", before, after, ""))
+            continue
 
         if edgef is None:
             measured = EdgeWhitespaceFractions(left=1.0, right=1.0, top=1.0, bottom=1.0)
@@ -1358,8 +1449,9 @@ def apply_content_reposition_pass(
     *,
     author: str,
     title: str,
+    selected_pages: Optional[set[int]] = None,
 ) -> List[PageTransform]:
-    edge_fracs = detect_edge_whitespace_fractions_from_pdf(input_pdf_path)
+    edge_fracs = detect_edge_whitespace_fractions_from_pdf(input_pdf_path, selected_pages=selected_pages)
     reader = PdfReader(str(input_pdf_path))
     writer = PdfWriter()
     events: List[PageTransform] = []
@@ -1394,6 +1486,13 @@ def apply_content_reposition_pass(
 
     for idx, (page, edgef) in enumerate(zip(reader.pages, edge_fracs), start=1):
         before = page_size_in_config_units(page)
+
+        in_range = (selected_pages is None) or (idx in selected_pages)
+        if not in_range:
+            after = before
+            writer.add_page(page)
+            events.append(PageTransform(idx, "none", before, after, ""))
+            continue
 
         action = "none"
         note = ""
@@ -1550,7 +1649,7 @@ def main() -> int:
         description=(
             "Normalize PDF (or auto-convert EPUB) to configured target page size, "
             "optionally rotate landscape pages to portrait, "
-            "pad to target aspect ratio and scale to target, "
+            "pad to target aspect ratio, scale to target, "
             "apply content-aware uniform smart crop (with optional ratio-abiding post-crop padding) and rescale to target, "
             "optionally restore exact pre-normalization-pad page dimensions, "
             "optionally redistribute whitespace, "
@@ -1598,19 +1697,36 @@ def main() -> int:
         norm_events: List[PageTransform] = []
         per_page_norm_pad_sides: List[PadEquivalentTrimSides] = []
 
+        try:
+            page_range = parse_inclusive_page_range(PAGE_RANGE) if PAGE_RANGE else None
+            selected_pages = build_selected_pages(len(reader.pages), page_range)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
         for idx, page in enumerate(reader.pages, start=1):
             before = page_size_in_config_units(page)
 
-            out_page = page
-            if ENABLE_NORMALIZATION:
-                out_page, action, note, norm_pad_sides = normalize_page_to_target(page)
+            in_range = idx in selected_pages
+            if not in_range:
+                out_page = page
+                action, note, norm_pad_sides = ("none", "outside selected page range", PadEquivalentTrimSides())
             else:
-                action, note, norm_pad_sides = ("none", "normalization disabled", PadEquivalentTrimSides())
+                out_page = page
+                if ENABLE_NORMALIZATION:
+                    out_page, action, note, norm_pad_sides = normalize_page_to_target(page)
+                else:
+                    action, note, norm_pad_sides = (
+                        "none",
+                        "normalization disabled",
+                        PadEquivalentTrimSides(),
+                    )
 
             after = page_size_in_config_units(out_page)
             per_page_norm_pad_sides.append(norm_pad_sides)
 
-            maybe_compress_page_content_streams(out_page)
+            if in_range:
+                maybe_compress_page_content_streams(out_page)
 
             writer.add_page(out_page)
             norm_events.append(
@@ -1645,6 +1761,7 @@ def main() -> int:
                 smart_cropped_pdf,
                 author=AUTHOR,
                 title=title,
+                selected_pages=selected_pages,
             )
             all_events = merge_page_events(all_events, smart_crop_events)
             current_pdf = smart_cropped_pdf
@@ -1676,6 +1793,7 @@ def main() -> int:
                     title=title,
                     document_target_pad_sides=doc_norm_pad_target_sides,
                     residual_pad_sides_per_page=residuals,
+                    selected_pages=selected_pages,
                 )
                 all_events = merge_page_events(all_events, restitution_events)
                 current_pdf = restitution_pdf
@@ -1687,6 +1805,7 @@ def main() -> int:
                 reposition_pdf,
                 author=AUTHOR,
                 title=title,
+                selected_pages=selected_pages,
             )
             all_events = merge_page_events(all_events, reposition_events)
             current_pdf = reposition_pdf
@@ -1707,4 +1826,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
