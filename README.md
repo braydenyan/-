@@ -65,7 +65,7 @@
 - [YouTube Comment Search](https://addons.mozilla.org/en-US/firefox/addon/ycs-continued)
 
 # uBlock Filters
-- `www.youtube.com##ytd-rich-section-renderer:has(ytd-talk-to-recs-flow-renderer`
+- `www.youtube.com##ytd-rich-section-renderer:has(ytd-talk-to-recs-flow-renderer)`
 - `www.youtube.com##ytd-rich-section-renderer:has(ytd-chips-shelf-with-video-shelf-renderer)`
 - `www.youtube.com##ytd-rich-section-renderer:has(ytd-mini-game-card-view-model)`
 - `www.youtube.com##ytd-rich-section-renderer:has(ytd-brand-video-shelf-renderer)`
