@@ -23,6 +23,7 @@
 - [PDF Arranger](https://github.com/pdfarranger/pdfarranger)
 - [Picocrypt](https://github.com/Picocrypt/Picocrypt)
 - [Prism Launcher](https://github.com/PrismLauncher/PrismLauncher)
+- [qBittorrent](https://github.com/qbittorrent/qBittorrent)
 - [RetroArch](https://github.com/libretro/RetroArch)
 - [RHash](https://github.com/rhash/RHash)
 - [ShareX](https://github.com/ShareX/ShareX)
@@ -30,7 +31,7 @@
 - [Sioyek](https://github.com/ahrm/sioyek)
 - [Syncthing](https://github.com/syncthing/syncthing)
 - [TOR](https://github.com/torproject/tor)
-- [qBittorrent](https://github.com/qbittorrent/qBittorrent)
+- [VSCode](https://github.com/microsoft/vscode)
 - [WinUtil](https://github.com/ChrisTitusTech/winutil)
 
 # Freeware
