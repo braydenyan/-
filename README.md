@@ -2,7 +2,7 @@
 - [Awesome-Selfhosted](https://github.com/awesome-selfhosted/awesome-selfhosted)
 - [Definitve-Opensource](https://github.com/mustbeperfect/definitive-opensource)
 - [FMHY](https://fmhy.net/beginners-guide)
-- [Privacy](https://github.com/privacyguides/privacyguides.org)
+- [Privacy Guides](https://github.com/privacyguides/privacyguides.org)
 
 # FOSS
 - [7-Zip](https://github.com/ip7z/7zip)
@@ -46,6 +46,21 @@
 - [Unity](https://unity.com/) *
 - [WirelessKeyView](https://www.nirsoft.net/utils/wireless_key.html)
 - [XnView](https://www.xnview.com/en)
+
+# Non-steam
+- [AM2R](https://archive.org/details/am2r1.1)[Launcher](https://github.com/AM2R-Community-Developers/AM2RLauncher)
+- [Cave Story]()
+- [Cave Story ~ Encore]()
+- [HOME]()
+- [Mega Man Unlimited]()
+- [Mega Man Unlimited 2]()
+- [OFF]()
+- [Pokémon Clover]()
+- [Pokémon Close Combat]()
+- [Pokémon Unbound]()
+- [Pokémon Uranium]()
+- [Slippi]()
+- [Undertale Yellow]()
 
 # Browser Extensions
 - [Behind the Overlay](https://addons.mozilla.org/en-US/firefox/addon/behind_the_overlay)
