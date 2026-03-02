@@ -1,0 +1,404 @@
+___Col 1 Entry___
+
+=LET(
+  t, TRIM(INDIRECT("RC[-1]",FALSE)),
+  r, INDIRECT("RC[1]",FALSE),
+
+  reBr, "\[[^\]]*\]",
+  reTag, "(\[-?\d+\+(1[0-2]|0?[1-9])\/\d{4}\])",
+
+  hasBr,  IFERROR(REGEXMATCH(t,reBr), REGEXTEST(t,reBr)),
+  hasTag, IFERROR(REGEXMATCH(t,reTag), REGEXTEST(t,reTag)),
+
+  tag,    IFERROR(REGEXEXTRACT(t,reTag), ""),
+
+  period, IFERROR(VALUE(REGEXEXTRACT(tag,"^\[(-?\d+)\+")), 0),
+  tagM,   IFERROR(VALUE(REGEXEXTRACT(tag,"\+(\d{1,2})/")), 0),
+  tagY,   IFERROR(VALUE(REGEXEXTRACT(tag,"/(\d{4})\]$")), 0),
+
+  curYM,  YEAR(TODAY())*12 + MONTH(TODAY()),
+  tagYM,  tagY*12 + tagM,
+  dYM,    curYM - tagYM,
+
+  scheduleOK,
+    IF(NOT(hasTag),
+      TRUE,
+      IF(period=0,
+        curYM=tagYM,
+        AND(MOD(dYM,period)=0, dYM/period>=0)
+      )
+    ),
+
+  xVal,   IFERROR(VALUE(MID(r,3,LEN(r)-2)), 0),
+  eomDay, DAY(EOMONTH(TODAY(),0)),
+
+  hyphens, LEN(r) - LEN(SUBSTITUTE(r,"-","")),
+
+  mPart,  IFERROR(VALUE(LEFT(r, FIND("-",r)-1)), 0),
+  dPart,  IFERROR(VALUE(MID(r, FIND("-",r)+1, LEN(r)-FIND("-",r)-2)), 0),
+
+  lastDayM, IFERROR(DAY(EOMONTH(DATE(YEAR(TODAY()),mPart,1),0)), 0),
+  dueDate,  IFERROR(DATE(YEAR(TODAY()), mPart, MIN(dPart, lastDayM)), 0),
+
+  IF(
+    AND(hasBr, NOT(hasTag)),
+    "?",
+    IF(
+      LEFT(r,2)="x-",
+      IF(
+        IFERROR(FIND("-",r,3),0)>0,
+        "?",
+        IF(
+          xVal<1,
+          "?",
+          IF(
+            scheduleOK,
+            IF(DAY(TODAY())<MIN(xVal,eomDay), "PENDING", ">>"),
+            "-"
+          )
+        )
+      ),
+      IF(
+        RIGHT(r,2)="-x",
+        IF(
+          hyphens<>2,
+          "?",
+          IF(
+            OR(mPart<1, mPart>12),
+            "?",
+            IF(
+              dPart<1,
+              "?",
+              IF(
+                MONTH(TODAY())=mPart,
+                IF(TODAY()<dueDate, "PENDING", ">>"),
+                "-"
+              )
+            )
+          )
+        ),
+        "?"
+      )
+    )
+  )
+)
+
+___Col 2 Entry___
+
+=LET(
+  s, IFERROR(TRIM(INDIRECT("RC[-2]",FALSE)), ""),
+
+  Diff, LAMBDA(
+    IFERROR(
+      N(OFFSET(INDIRECT("RC",FALSE),0,1)) - N(OFFSET(INDIRECT("RC",FALSE),0,-1)),
+      0
+    )
+  ),
+  DiffTxt, LAMBDA(TEXT(Diff(), "0.00")),
+
+  gate1,
+    IFERROR(
+      LET(
+        pL,     FIND("[", s),
+        pPlus,  FIND("+", s, pL),
+        pSlash, FIND("/", s, pPlus),
+
+        m,       VALUE(MID(s, pPlus+1, pSlash-pPlus-1)),
+        closeOK, MID(s, pSlash+5, 1) = "]",
+
+        AND(closeOK, m>=1, m<=12)
+      ),
+      FALSE
+    ),
+
+  IF(
+    gate1,
+    LET(
+      cond2,
+        IFERROR(
+          LET(
+            pL,     FIND("[", s),
+            pPlus,  FIND("+", s, pL),
+            pSlash, FIND("/", s, pPlus),
+
+            periodLen, VALUE(MID(s, pL+1, pPlus-pL-1)),
+            m,         VALUE(MID(s, pPlus+1, pSlash-pPlus-1)),
+            y,         VALUE(MID(s, pSlash+1, 4)),
+
+            currIdx,  YEAR(TODAY())*12 + MONTH(TODAY()),
+            startIdx, y*12 + m,
+
+            IF(
+              periodLen=0,
+              currIdx = startIdx,
+              AND(
+                MOD(currIdx-startIdx, periodLen)=0,
+                (currIdx-startIdx)/periodLen >= 0
+              )
+            )
+          ),
+          FALSE
+        ),
+
+      IF(
+        cond2,
+        "! " & DiffTxt() & " !",
+        "- " & DiffTxt() & " -"
+      )
+    ),
+    Diff()
+  )
+)
+
+___Col 1 Bottom___
+
+=LET(
+  lastSepRow,
+    IFERROR(
+      LOOKUP(
+        2,
+        1/(INDIRECT("R1C:R[-1]C",FALSE)="§"),
+        ROW(INDIRECT("R1C:R[-1]C",FALSE))
+      ),
+      0
+    ),
+  startRow,
+    lastSepRow+1,
+  rng,
+    INDIRECT("R"&startRow&"C:R[-1]C",FALSE),
+  ROUND(
+    SUM(rng)+SUMIF(rng,"=>>",OFFSET(rng,0,2)),
+    2
+  )
+)
+
+___Col 2 Bottom___
+
+=LET(
+  rowNow,ROW(),
+  marker_ref,"R1C:R[-1]C",
+  startRow,
+    IF(
+      rowNow=1,
+      1,
+      IFERROR(
+        LOOKUP(
+          2,
+          1/(INDIRECT(marker_ref,FALSE)="§"),
+          ROW(INDIRECT(marker_ref,FALSE))
+        )+1,
+        1
+      )
+    ),
+  IF(
+    startRow>=rowNow,
+    0,
+    LET(
+      txt,INDIRECT("R"&startRow&"C[-2]:R[-1]C[-2]",FALSE),
+      vals,INDIRECT("R"&startRow&"C:R[-1]C",FALSE),
+      needle,"* Annual Sink *",
+      norm,
+        LAMBDA(
+          x,
+          TRIM(
+            SUBSTITUTE(
+              SUBSTITUTE(
+                SUBSTITUTE(
+                  SUBSTITUTE(
+                    SUBSTITUTE(
+                      CLEAN(x&""),
+                      CHAR(160)," "
+                    ),
+                    UNICHAR(8239)," "
+                  ),
+                  UNICHAR(65279),""
+                ),
+                UNICHAR(8203),""
+              ),
+              CHAR(9)," "
+            )
+          )
+        ),
+      mask,
+        MAP(
+          txt,
+          LAMBDA(
+            t,
+            --ISERROR(
+              FIND(
+                LOWER(needle),
+                LOWER(norm(t))
+              )
+            )
+          )
+        ),
+      nums,
+        MAP(
+          vals,
+          LAMBDA(
+            v,
+            IF(
+              ISNUMBER(v),
+              v,
+              LET(
+                s,norm(v),
+                wrapped,AND(LEFT(s,1)="!",RIGHT(s,1)="!"),
+                inner,IF(wrapped,TRIM(MID(s,2,LEN(s)-2)),""),
+                inner2,SUBSTITUTE(inner,",",""),
+                dotPos,IFERROR(FIND(".",inner2),0),
+                decOK,AND(dotPos>1,LEN(inner2)-dotPos=2),
+                minusOK,
+                  IF(
+                    LEFT(inner2,1)="-",
+                    ISERROR(FIND("-",MID(inner2,2,999))),
+                    ISERROR(FIND("-",inner2))
+                  ),
+                rem,
+                  SUBSTITUTE(
+                    SUBSTITUTE(
+                      SUBSTITUTE(
+                        SUBSTITUTE(
+                          SUBSTITUTE(
+                            SUBSTITUTE(
+                              SUBSTITUTE(
+                                SUBSTITUTE(
+                                  SUBSTITUTE(
+                                    SUBSTITUTE(
+                                      SUBSTITUTE(
+                                        SUBSTITUTE(
+                                          inner2,
+                                          "-",""
+                                        ),
+                                        ".",""
+                                      ),
+                                      "0",""
+                                    ),
+                                    "1",""
+                                  ),
+                                  "2",""
+                                ),
+                                "3",""
+                              ),
+                              "4",""
+                            ),
+                            "5",""
+                          ),
+                          "6",""
+                        ),
+                        "7",""
+                      ),
+                      "8",""
+                    ),
+                    "9",""
+                  ),
+                charsOK,rem="",
+                IF(
+                  AND(wrapped,decOK,minusOK,charsOK),
+                  VALUE(inner2),
+                  0
+                )
+              )
+            )
+          )
+        ),
+      ROUND(
+        SUMPRODUCT(mask,nums),
+        2
+      )
+    )
+  )
+)
+
+___Col 3 Bottom___
+
+=LET(
+  startRow,
+    IFERROR(
+      LOOKUP(
+        2,
+        1/(INDIRECT("R1C:R[-1]C",FALSE)="§"),
+        ROW(INDIRECT("R1C:R[-1]C",FALSE))
+      )+1,
+      1
+    ),
+
+  rngVal,   INDIRECT("R"&startRow&"C:R[-1]C",FALSE),
+  rngCat,   INDIRECT("R"&startRow&"C[-3]:R[-1]C[-3]",FALSE),
+  rngFlag,  INDIRECT("R"&startRow&"C[-1]:R[-1]C[-1]",FALSE),
+  rngGuard, INDIRECT("R"&startRow&"C[-2]:R[-1]C[-2]",FALSE),
+
+  vals,
+    IFERROR(
+      ARRAYFORMULA(IFERROR(VALUE(rngVal),0)),
+      IFERROR(VALUE(rngVal),0)
+    ),
+
+  flagTxt,
+    IFERROR(
+      ARRAYFORMULA(TRIM(TO_TEXT(rngFlag))),
+      TRIM(rngFlag&"")
+    ),
+
+  guardTxt,
+    IFERROR(
+      ARRAYFORMULA(TRIM(TO_TEXT(rngGuard))),
+      TRIM(rngGuard&"")
+    ),
+
+  keepNotDisc,
+    IFERROR(
+      ARRAYFORMULA(ISERROR(SEARCH("* Discretionary *",rngCat))),
+      ISERROR(SEARCH("* Discretionary *",rngCat))
+    ),
+
+  keepNotSink,
+    IFERROR(
+      ARRAYFORMULA(ISERROR(SEARCH("* Annual Sink *",rngCat))),
+      ISERROR(SEARCH("* Annual Sink *",rngCat))
+    ),
+
+  endMark,
+    IFERROR(
+      ARRAYFORMULA(IFERROR(REGEXMATCH(flagTxt,"[!x-]$"),REGEXTEST(flagTxt,"[!x-]$"))),
+      IFERROR(REGEXMATCH(flagTxt,"[!x-]$"),REGEXTEST(flagTxt,"[!x-]$"))
+    ),
+
+  bangMark,
+    IFERROR(
+      ARRAYFORMULA(IFERROR(REGEXMATCH(flagTxt,"!$"),REGEXTEST(flagTxt,"!$"))),
+      IFERROR(REGEXMATCH(flagTxt,"!$"),REGEXTEST(flagTxt,"!$"))
+    ),
+
+  xMark,
+    IFERROR(
+      ARRAYFORMULA(IFERROR(REGEXMATCH(flagTxt,"x$"),REGEXTEST(flagTxt,"x$"))),
+      IFERROR(REGEXMATCH(flagTxt,"x$"),REGEXTEST(flagTxt,"x$"))
+    ),
+
+  guardOK,
+    IFERROR(
+      ARRAYFORMULA(guardTxt<>"-"),
+      guardTxt<>"-"
+    ),
+
+  includeUnflag,
+    IFERROR(
+      ARRAYFORMULA((keepNotDisc*keepNotSink*(1-endMark))>0),
+      (keepNotDisc*keepNotSink*(1-endMark))>0
+    ),
+
+  includeFlag,
+    IFERROR(
+      ARRAYFORMULA((keepNotDisc*keepNotSink*((bangMark + xMark*guardOK)>0))>0),
+      (keepNotDisc*keepNotSink*((bangMark + xMark*guardOK)>0))>0
+    ),
+
+  sumUnflag, IFERROR(SUM(FILTER(vals,includeUnflag)),0),
+  sumFlag,   IFERROR(SUM(FILTER(vals,includeFlag)),0),
+
+  outTxt,
+    TEXT(ROUND(sumUnflag,2),"0.00") & " \ " &
+    TEXT(ROUND(sumUnflag+sumFlag,2),"0.00"),
+
+  IFERROR(ARRAY_CONSTRAIN(outTxt,1,1), outTxt)
+)
